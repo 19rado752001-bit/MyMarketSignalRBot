@@ -1,0 +1,108 @@
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import yfinance as yf
+import pandas as pd
+
+# Մուտքագրիր քո Token-ը
+TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+bot = telebot.TeleBot(TOKEN)
+
+# Օգտատերերի ընտրությունները պահելու համար
+user_selections = {}
+
+# 1. /start հրաման - Ակտիվի ընտրություն
+@bot.message_handler(commands=['start', 'menu'])
+def start_menu(message):
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("🪙 BTC/USD", callback_data="asset_BTC-USD"),
+        InlineKeyboardButton("🪙 ETH/USD", callback_data="asset_ETH-USD")
+    )
+    markup.row(
+        InlineKeyboardButton("💱 EUR/USD", callback_data="asset_EURUSD=X"),
+        InlineKeyboardButton("💱 GBP/USD", callback_data="asset_GBPUSD=X")
+    )
+    bot.send_message(message.chat.id, "📊 **Ընտրիր ակտիվը, որի համար ուզում ես ազդանշան:**", parse_mode="Markdown", reply_markup=markup)
+
+# 2. Callback Processing (Կոճակների սեղմում)
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    chat_id = call.message.chat.id
+    data = call.data
+
+    # Ակտիվի ընտրություն
+    if data.startswith("asset_"):
+        asset = data.split("_")[1]
+        user_selections[chat_id] = {"asset": asset}
+        
+        # Ցույց տալ Timeframe-ի մենյուն
+        markup = InlineKeyboardMarkup()
+        markup.row(
+            InlineKeyboardButton("⏱️ 5Min", callback_data="tf_5m"),
+            InlineKeyboardButton("⏱️ 15Min", callback_data="tf_15m"),
+            InlineKeyboardButton("⏱️ 1Hour", callback_data="tf_1h")
+        )
+        bot.edit_message_text(f"✅ Ընտրված է: **{asset}**\n\n⏱️ **Ընտրիր Timeframe-ը:**", 
+                              chat_id=chat_id, message_id=call.message.message_id, 
+                              parse_mode="Markdown", reply_markup=markup)
+
+    # Timeframe-ի ընտրություն և վերլուծություն
+    elif data.startswith("tf_"):
+        tf = data.split("_")[1]
+        asset = user_selections.get(chat_id, {}).get("asset", "BTC-USD")
+        
+        bot.answer_callback_query(call.id, "Վերլուծվում է շուկան...")
+        
+        # Ազդանշանի հաշվարկ
+        signal, rsi_val, price = get_market_signal(asset, tf)
+        
+        response = f"📊 **ԱԶԴԱՆՇԱՆԻ ՎԵՐԼՈՒԾՈՒԹՅՈՒՆ**\n\n" \
+                   f"🔹 **Ակտիվ:** `{asset}`\n" \
+                   f"⏱️ **Timeframe:** `{tf}`\n" \
+                   f"💵 **Ընթացիկ գին:** `{price}`\n" \
+                   f"📈 **RSI (14):** `{rsi_val:.2f}`\n\n" \
+                   f"💡 **Ազդանշան:** {signal}"
+        
+        # Նորից ցույց տալ /start կոճակ
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🔄 Նոր վերլուծություն", callback_data="reset"))
+        
+        bot.edit_message_text(response, chat_id=chat_id, message_id=call.message.message_id, 
+                              parse_mode="Markdown", reply_markup=markup)
+
+    elif data == "reset":
+        start_menu(call.message)
+
+# 3. Շուկայի տվյալների վերլուծության ֆունկցիա
+def get_market_signal(ticker, timeframe):
+    try:
+        period = "5d" if timeframe in ["5m", "15m"] else "1mo"
+        df = yf.download(tickers=ticker, period=period, interval=timeframe, progress=False)
+        
+        if df.empty:
+            return "⚠️ Տվյալները հասանելի չեն", 0, 0
+            
+        close = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
+        
+        # RSI 14 Հաշվարկ
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        last_rsi = rsi.iloc[-1]
+        last_price = close.iloc[-1]
+        
+        if last_rsi <= 30:
+            signal = "🟢 **BUY (Գնել)** — RSI-ն գերվաճառված գոտում է (Oversold)"
+        elif last_rsi >= 70:
+            signal = "🔴 **SELL (Վաճառել)** — RSI-ն գերգնված գոտում է (Overbought)"
+        else:
+            signal = "⚪ **NEUTRAL (Սպասել)** — Հստակ ազդանշան չկա"
+            
+        return signal, last_rsi, last_price
+    except Exception as e:
+        return f"Սխալ: {str(e)}", 0, 0
+
+bot.infinity_polling()
