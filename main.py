@@ -3,7 +3,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yfinance as yf
 import pandas as pd
 
-# Քո Token-ը տեղադրված է
+# 🔑 Քո Token-ը
 TOKEN = "8802217530:AAGJ_qmoZobTS6t0c0dlRrXmrpKlGH6SCY4"
 bot = telebot.TeleBot(TOKEN)
 
@@ -19,12 +19,18 @@ def start_menu(message):
     )
     markup.row(
         InlineKeyboardButton("💱 EUR/USD", callback_data="asset_EURUSD=X"),
-        InlineKeyboardButton("💱 GBP/USD", callback_data="asset_GBPUSD=X")
+        InlineKeyboardButton("🟡 Ոսկի (Gold)", callback_data="asset_GC=F")
     )
     bot.send_message(message.chat.id, "📊 **Ընտրեք ակտիվը վերլուծության համար․**", parse_mode="Markdown", reply_markup=markup)
 
 def calculate_rsi(data, window=14):
-    delta = data['Close'].diff()
+    # 🛠️ Ստուգում և մշակում ենք yfinance-ի բազմամակարդակ սյունակները (MultiIndex)
+    if isinstance(data.columns, pd.MultiIndex):
+        close_series = data['Close'].iloc[:, 0]
+    else:
+        close_series = data['Close']
+        
+    delta = close_series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss
@@ -75,8 +81,13 @@ def handle_callback(call):
                 bot.send_message(chat_id, "⚠️ Տվյալները չհաջողվեց ստանալ։ Փորձեք մի փոքր ուշ։")
                 return
 
+            if isinstance(df.columns, pd.MultiIndex):
+                close_series = df['Close'].iloc[:, 0]
+            else:
+                close_series = df['Close']
+
             df['RSI'] = calculate_rsi(df)
-            latest_price = round(float(df['Close'].iloc[-1]), 5)
+            latest_price = round(float(close_series.iloc[-1]), 5)
             latest_rsi = round(float(df['RSI'].iloc[-1]), 2)
 
             if latest_rsi <= 30:
