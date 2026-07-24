@@ -1,15 +1,25 @@
+import os
+import threading
+from flask import Flask
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yfinance as yf
 import pandas as pd
 
-# 🔑 Քո Token-ը
+# 🔑 Токен бота
 TOKEN = "8802217530:AAGJ_qmoZobTS6t0c0dlRrXmrpKlGH6SCY4"
 bot = telebot.TeleBot(TOKEN)
 
+# 🌐 Инициализация Flask для удовлетворения требований Render Web Service
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Bot is running and active!"
+
 user_selections = {}
 
-# 1. /start & /menu հրաման
+# 1. /start & /menu хриман
 @bot.message_handler(commands=['start', 'menu'])
 def start_menu(message):
     markup = InlineKeyboardMarkup()
@@ -24,7 +34,6 @@ def start_menu(message):
     bot.send_message(message.chat.id, "📊 **Ընտրեք ակտիվը վերլուծության համար․**", parse_mode="Markdown", reply_markup=markup)
 
 def calculate_rsi(data, window=14):
-    # 🛠️ Ստուգում և մշակում ենք yfinance-ի բազմամակարդակ սյունակները (MultiIndex)
     if isinstance(data.columns, pd.MultiIndex):
         close_series = data['Close'].iloc[:, 0]
     else:
@@ -122,5 +131,16 @@ def handle_callback(call):
     elif data == "start_again":
         start_menu(call.message)
 
+# Запуск бота в отдельном потоке
+def run_bot():
+    bot.infinity_polling(none_stop=True)
+
 if __name__ == "__main__":
-    bot.infinity_polling()
+    # Запускаем телеграм-бота в фоне
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+
+    # Запускаем Flask-сервер для Render (порт берется из переменных окружения или 10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
