@@ -3,14 +3,13 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yfinance as yf
 import pandas as pd
 
-# Մուտքագրիր քո Token-ը
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+# Քո Token-ը տեղադրված է
+TOKEN = "2217530:AAGriyzPqr5Cvk06h0nj1YpJ2g4HPVNPMy8"
 bot = telebot.TeleBot(TOKEN)
 
-# Օգտատերերի ընտրությունները պահելու համար
 user_selections = {}
 
-# 1. /start հրաման - Ակտիվի ընտրություն
+# 1. /start & /menu հրաման
 @bot.message_handler(commands=['start', 'menu'])
 def start_menu(message):
     markup = InlineKeyboardMarkup()
@@ -22,87 +21,95 @@ def start_menu(message):
         InlineKeyboardButton("💱 EUR/USD", callback_data="asset_EURUSD=X"),
         InlineKeyboardButton("💱 GBP/USD", callback_data="asset_GBPUSD=X")
     )
-    bot.send_message(message.chat.id, "📊 **Ընտրիր ակտիվը, որի համար ուզում ես ազդանշան:**", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, "📊 **Ընտրեք ակտիվը վերլուծության համար․**", parse_mode="Markdown", reply_markup=markup)
 
-# 2. Callback Processing (Կոճակների սեղմում)
+def calculate_rsi(data, window=14):
+    delta = data['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+# 2. Կոճակների սեղմում
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     chat_id = call.message.chat.id
     data = call.data
 
-    # Ակտիվի ընտրություն
     if data.startswith("asset_"):
         asset = data.split("_")[1]
-        user_selections[chat_id] = {"asset": asset}
+        user_selections[chat_id] = {'asset': asset}
         
-        # Ցույց տալ Timeframe-ի մենյուն
         markup = InlineKeyboardMarkup()
         markup.row(
-            InlineKeyboardButton("⏱️ 5Min", callback_data="tf_5m"),
-            InlineKeyboardButton("⏱️ 15Min", callback_data="tf_15m"),
-            InlineKeyboardButton("⏱️ 1Hour", callback_data="tf_1h")
+            InlineKeyboardButton("⏱ 1M", callback_data="tf_1m"),
+            InlineKeyboardButton("⏱ 5M", callback_data="tf_5m"),
+            InlineKeyboardButton("⏱ 15M", callback_data="tf_15m")
         )
-        bot.edit_message_text(f"✅ Ընտրված է: **{asset}**\n\n⏱️ **Ընտրիր Timeframe-ը:**", 
-                              chat_id=chat_id, message_id=call.message.message_id, 
-                              parse_mode="Markdown", reply_markup=markup)
+        bot.edit_message_text(f"✅ Ընտրված ակտիվ՝ *{asset}*\n\n⏱ **Ընտրեք Timeframe-ը․**", 
+                              chat_id=chat_id, 
+                              message_id=call.message.message_id, 
+                              parse_mode="Markdown", 
+                              reply_markup=markup)
 
-    # Timeframe-ի ընտրություն և վերլուծություն
     elif data.startswith("tf_"):
         tf = data.split("_")[1]
-        asset = user_selections.get(chat_id, {}).get("asset", "BTC-USD")
+        asset = user_selections.get(chat_id, {}).get('asset', 'BTC-USD')
         
-        bot.answer_callback_query(call.id, "Վերլուծվում է շուկան...")
+        bot.edit_message_text(f"⏳ Վերլուծվում է *{asset}* ({tf.upper()})...", 
+                              chat_id=chat_id, 
+                              message_id=call.message.message_id, 
+                              parse_mode="Markdown")
         
-        # Ազդանշանի հաշվարկ
-        signal, rsi_val, price = get_market_signal(asset, tf)
-        
-        response = f"📊 **ԱԶԴԱՆՇԱՆԻ ՎԵՐԼՈՒԾՈՒԹՅՈՒՆ**\n\n" \
-                   f"🔹 **Ակտիվ:** `{asset}`\n" \
-                   f"⏱️ **Timeframe:** `{tf}`\n" \
-                   f"💵 **Ընթացիկ գին:** `{price}`\n" \
-                   f"📈 **RSI (14):** `{rsi_val:.2f}`\n\n" \
-                   f"💡 **Ազդանշան:** {signal}"
-        
-        # Նորից ցույց տալ /start կոճակ
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔄 Նոր վերլուծություն", callback_data="reset"))
-        
-        bot.edit_message_text(response, chat_id=chat_id, message_id=call.message.message_id, 
-                              parse_mode="Markdown", reply_markup=markup)
+        try:
+            interval_map = {'1m': '1m', '5m': '5m', '15m': '15m'}
+            period_map = {'1m': '1d', '5m': '5d', '15m': '7d'}
+            
+            interval = interval_map.get(tf, '5m')
+            period = period_map.get(tf, '5d')
 
-    elif data == "reset":
+            df = yf.download(tickers=asset, period=period, interval=interval, progress=False)
+
+            if df.empty or len(df) < 15:
+                bot.send_message(chat_id, "⚠️ Տվյալները չհաջողվեց ստանալ։ Փորձեք մի փոքր ուշ։")
+                return
+
+            df['RSI'] = calculate_rsi(df)
+            latest_price = round(float(df['Close'].iloc[-1]), 5)
+            latest_rsi = round(float(df['RSI'].iloc[-1]), 2)
+
+            if latest_rsi <= 30:
+                signal = "🟢 **BUY (CALL / ԳՆԵԼ)** 🚀"
+                reason = "RSI-ն գտնվում է Oversold (գերվաճառված) գոտում:"
+            elif latest_rsi >= 70:
+                signal = "🔴 **SELL (PUT / ՎԱՃԱՌԵԼ)** 🔻"
+                reason = "RSI-ն գտնվում է Overbought (գերգնված) գոտում:"
+            else:
+                signal = "⚪ **WAIT (ՍՊԱՍԵԼ)** ⏳"
+                reason = "Շուկայում հստակ ազդանշան չկա:"
+
+            res_msg = (
+                f"📊 **ԱԶԴԱՆՇԱՆԻ ՎԵՐԼՈՒԾՈՒԹՅՈՒՆ**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔹 **Ակտիվ:** `{asset}`\n"
+                f"⏱ **Timeframe:** `{tf.upper()}`\n"
+                f"💰 **Ընթացիկ գին:** `{latest_price}`\n"
+                f"📈 **RSI Ցուցանիշ:** `{latest_rsi}`\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🎯 **Ազդանշան:** {signal}\n"
+                f"💡 **Պատճառ:** {reason}\n"
+            )
+
+            markup = InlineKeyboardMarkup()
+            markup.row(InlineKeyboardButton("🔄 Նոր վերլուծություն", callback_data="start_again"))
+            bot.send_message(chat_id, res_msg, parse_mode="Markdown", reply_markup=markup)
+
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ Սխալ տեղի ունեցավ: {str(e)}")
+
+    elif data == "start_again":
         start_menu(call.message)
 
-# 3. Շուկայի տվյալների վերլուծության ֆունկցիա
-def get_market_signal(ticker, timeframe):
-    try:
-        period = "5d" if timeframe in ["5m", "15m"] else "1mo"
-        df = yf.download(tickers=ticker, period=period, interval=timeframe, progress=False)
-        
-        if df.empty:
-            return "⚠️ Տվյալները հասանելի չեն", 0, 0
-            
-        close = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
-        
-        # RSI 14 Հաշվարկ
-        delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        last_rsi = rsi.iloc[-1]
-        last_price = close.iloc[-1]
-        
-        if last_rsi <= 30:
-            signal = "🟢 **BUY (Գնել)** — RSI-ն գերվաճառված գոտում է (Oversold)"
-        elif last_rsi >= 70:
-            signal = "🔴 **SELL (Վաճառել)** — RSI-ն գերգնված գոտում է (Overbought)"
-        else:
-            signal = "⚪ **NEUTRAL (Սպասել)** — Հստակ ազդանշան չկա"
-            
-        return signal, last_rsi, last_price
-    except Exception as e:
-        return f"Սխալ: {str(e)}", 0, 0
-
-bot.infinity_polling()
+if __name__ == "__main__":
+    bot.infinity_polling()
