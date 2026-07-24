@@ -4,7 +4,7 @@ import yfinance as yf
 import pandas as pd
 
 # Քո Token-ը տեղադրված է
-TOKEN = "8802217530:AAEINPn5rO_UFuGbLrycftR5RwUgGyiczEA"
+TOKEN = "8802217530:AAGJ_qmoZobTS6t0c0dlRrXmrpKlGH6SCY4"
 bot = telebot.TeleBot(TOKEN)
 
 user_selections = {}
