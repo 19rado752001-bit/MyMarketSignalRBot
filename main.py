@@ -1,7 +1,6 @@
 import asyncio
 import logging
-import sys
-import ccxt.async_support as ccxt  # Ասինխրոն CCXT
+import ccxt.async_support as ccxt
 import pandas as pd
 import pandas_ta as ta
 from aiogram import Bot, Dispatcher, F, types
@@ -21,29 +20,26 @@ SYMBOLS = {
     "BTC": "BTC/USDT",
     "ETH": "ETH/USDT",
     "SOL": "SOL/USDT",
-    "EUR": "EUR/USDT",  # Ֆորեքս զույգ (կախված բորսայի հասանելիությունից)
+    "EUR": "EUR/USDT",
 }
 
-TIMEFRAMES = ["5s", "10s", "1m", "5s", "15m", "1h"]
+TIMEFRAMES = ["5s", "10s", "1m", "5m", "15m", "1h"]
 
 
 async def fetch_and_analyze(symbol: str, timeframe: str):
   """Տվյալների ներբեռնում և ինդիկատորների հաշվարկ"""
   try:
-    # Վայրկյանայինների համար վերցնում ենք 1m բազային տվյալներ և վերամշակում
     tf_to_fetch = (
-        "1m" if timeframe in ["5s", "10s", "5s"] else timeframe
+        "1m" if timeframe in ["5s", "10s"] else timeframe
     )
 
     ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=tf_to_fetch, limit=100)
-    await exchange.close()
-
+    
     df = pd.DataFrame(
         ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
     )
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
 
-    # Եթե վայրկյանային է, կատարում ենք resample
     if timeframe == "5s":
       df.set_index("timestamp", inplace=True)
       df = df.resample("5s").agg(
@@ -70,7 +66,6 @@ async def fetch_and_analyze(symbol: str, timeframe: str):
     last_macd = df["MACD_12_26_9"].iloc[-1]
     last_signal = df["MACDs_12_26_9"].iloc[-1]
 
-    # Ազդանշանի տրամաբանություն (Scoring / Confluence)
     if last_rsi > 50 and last_macd > last_signal:
       return (
           f"🟢 **ԳՆԵԼ (BUY)**\n💱 Զույգ: **{symbol}**\n⏱ Թայմֆրեյմ: **{timeframe}**\n📊"
@@ -85,7 +80,7 @@ async def fetch_and_analyze(symbol: str, timeframe: str):
     else:
       return (
           f"⏳ **ՍՊԱՍԵԼ / Չեզոք**\n💱 Զույգ: **{symbol}**\n⏱ Թայմֆրեյմ:"
-          f" **{timeframe}**\n📊 RSI: {last_rsi:.2f} (Անհամաձայնություն)"
+          f" **{timeframe}**\n📊 RSI: {last_rsi:.2f}"
       )
 
   except Exception as e:
@@ -158,12 +153,11 @@ async def show_signal(callback: types.CallbackQuery):
   await callback.message.edit_text(result, parse_mode="Markdown")
   await callback.answer()
 
+
 async def main():
-  # drop_pending_updates=True-ն մաքրում է հին հարցումները և վերացնում կոնֆլիկտը
+  # Անջատում է հին հարցումները՝ կոնֆլիկտից խուսափելու համար
+  await exchange.close()
   await dp.start_polling(bot, drop_pending_updates=True)
-
-
-
 
 
 if __name__ == "__main__":
