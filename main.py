@@ -158,9 +158,11 @@ async def show_signal(callback: types.CallbackQuery):
   await callback.message.edit_text(result, parse_mode="Markdown")
   await callback.answer()
 
-
 async def main():
-  await dp.start_polling(bot)
+  # drop_pending_updates=True-ն մաքրում է հին հարցումները և վերացնում կոնֆլիկտը
+  await dp.start_polling(bot, drop_pending_updates=True)
+
+
 
 
 if __name__ == "__main__":
